@@ -1,0 +1,8 @@
+{
+  "name": "cofleet",
+  "description": "Cofleet project context and code intel for Claude Code",
+  "version": "0.4.0",
+  "author": { "name": "Cofleet" },
+  "homepage": "https://cofleet.dev",
+  "repository": "https://github.com/Cofleet/cofleet-marketplace"
+}
