@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cofleet": {
+      "type": "http",
+      "url": "https://app.cofleet.dev/mcp",
+      "headers": {
+        "X-Cofleet-Client": "plugin"
+      }
+    }
+  }
+}
