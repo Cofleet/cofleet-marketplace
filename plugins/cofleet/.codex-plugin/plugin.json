@@ -1,0 +1,40 @@
+{
+  "name": "cofleet",
+  "version": "0.4.0",
+  "description": "Cofleet project context and code intelligence for coding agents",
+  "author": {
+    "name": "Cofleet",
+    "url": "https://cofleet.dev"
+  },
+  "homepage": "https://cofleet.dev",
+  "keywords": [
+    "cofleet",
+    "development",
+    "collaboration"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "cofleet": {
+      "url": "https://app.cofleet.dev/mcp",
+      "http_headers": {
+        "X-Cofleet-Client": "plugin"
+      }
+    }
+  },
+  "interface": {
+    "displayName": "Cofleet",
+    "shortDescription": "Build Cofleet specs and share coding-agent activity",
+    "longDescription": "Use Cofleet project context and workflows to build specs and ship pull requests.",
+    "developerName": "Cofleet",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://cofleet.dev",
+    "defaultPrompt": [
+      "Build this Cofleet spec and open a pull request",
+      "Record a review video for this Cofleet spec"
+    ]
+  }
+}
