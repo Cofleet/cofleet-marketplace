@@ -1,0 +1,72 @@
+name: Release version
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cofleet-public-release-main
+  cancel-in-progress: false
+
+jobs:
+  release-version:
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Require a version newer than the then-current public main
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+
+          const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+          const manifests = [
+            'plugins/cofleet/.claude-plugin/plugin.json',
+            'plugins/cofleet/.codex-plugin/plugin.json',
+          ];
+          const ref = (value, label) => {
+            if (!/^[0-9a-f]{40}$/i.test(value ?? '')) throw new Error(`${label} must be a full commit SHA`);
+            return value;
+          };
+          const versionsAt = (sha, label) => {
+            const versions = manifests.map((path) => {
+              const source = execFileSync('git', ['show', `${sha}:${path}`], { encoding: 'utf8' });
+              const version = JSON.parse(source).version;
+              if (!semver.test(version ?? '')) throw new Error(`${label} ${path} has an invalid version`);
+              return version;
+            });
+            if (versions[0] !== versions[1]) throw new Error(`${label} plugin manifest versions do not match`);
+            return versions[0];
+          };
+          const compare = (left, right) => {
+            const a = left.split('.').map(BigInt);
+            const b = right.split('.').map(BigInt);
+            for (let index = 0; index < a.length; index += 1) {
+              if (a[index] > b[index]) return 1;
+              if (a[index] < b[index]) return -1;
+            }
+            return 0;
+          };
+
+          const base = versionsAt(ref(process.env.BASE_SHA, 'base SHA'), 'public main');
+          const candidate = versionsAt(ref(process.env.HEAD_SHA, 'head SHA'), 'candidate');
+          if (compare(candidate, base) <= 0) {
+            throw new Error(`candidate version ${candidate} must be greater than public main ${base}`);
+          }
+          NODE
