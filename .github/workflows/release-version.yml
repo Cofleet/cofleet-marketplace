@@ -36,23 +36,86 @@ jobs:
           import { execFileSync } from 'node:child_process';
 
           const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-          const manifests = [
-            'plugins/cofleet/.claude-plugin/plugin.json',
-            'plugins/cofleet/.codex-plugin/plugin.json',
-          ];
+          // Per plugin, because the required manifest set differs: cofleet
+          // ships both a Claude and a Codex manifest, cofleet-presence ships
+          // Claude only (it has no Codex packaging).
+          const manifests = {
+            cofleet: [
+              'plugins/cofleet/.claude-plugin/plugin.json',
+              'plugins/cofleet/.codex-plugin/plugin.json',
+            ],
+            'cofleet-presence': [
+              'plugins/cofleet-presence/.claude-plugin/plugin.json',
+            ],
+          };
           const ref = (value, label) => {
             if (!/^[0-9a-f]{40}$/i.test(value ?? '')) throw new Error(`${label} must be a full commit SHA`);
             return value;
           };
-          const versionsAt = (sha, label) => {
-            const versions = manifests.map((path) => {
+          // A missing plugin tree is a fact, not a failure. This check runs on
+          // EVERY pull request to main, including governance ones (LICENSE,
+          // SECURITY.md, .github) that carry no plugin — and before the first
+          // release main itself has no plugins/ to compare against.
+          const existsAt = (sha, path) => {
+            try {
+              execFileSync('git', ['cat-file', '-e', `${sha}:${path}`], { stdio: 'ignore' });
+              return true;
+            } catch {
+              return false;
+            }
+          };
+          // "No plugin at all" and "a plugin tree with no manifests" look the
+          // same if you only probe the manifests. The second is release-managed
+          // state that must never merge as a governance change: publicMainRelease
+          // would later reject the real first release as managed state without a
+          // manifest. Evaluated per plugin subtree, since a governance PR that
+          // touches neither plugin must still pass while a partial plugin
+          // (present tree, missing or incomplete manifests) must still fail.
+          const pluginTreeExistsAt = (sha, pluginName) => {
+            try {
+              const listing = execFileSync('git', ['ls-tree', '--name-only', `${sha}:plugins/${pluginName}`], { encoding: 'utf8' });
+              return listing.trim().length > 0;
+            } catch {
+              return false;
+            }
+          };
+          const pluginVersionAt = (sha, label, pluginName, paths) => {
+            const present = paths.filter((path) => existsAt(sha, path));
+            if (present.length === 0) {
+              if (pluginTreeExistsAt(sha, pluginName)) {
+                throw new Error(`${label} carries a plugins tree with neither plugin manifest`);
+              }
+              return null;
+            }
+            if (present.length !== paths.length) {
+              throw new Error(`${label} carries some but not all plugin manifests`);
+            }
+            const versions = paths.map((path) => {
               const source = execFileSync('git', ['show', `${sha}:${path}`], { encoding: 'utf8' });
               const version = JSON.parse(source).version;
               if (!semver.test(version ?? '')) throw new Error(`${label} ${path} has an invalid version`);
               return version;
             });
-            if (versions[0] !== versions[1]) throw new Error(`${label} plugin manifest versions do not match`);
+            if (new Set(versions).size > 1) throw new Error(`${label} plugin manifest versions do not match`);
             return versions[0];
+          };
+          // Returns both the resolved single version (or null when no plugin
+          // is present) and the raw per-plugin table, because the version
+          // alone cannot tell a head that dropped one released plugin from a
+          // head that never touched it: as long as any plugin remains present
+          // the resolved version is non-null either way.
+          const versionsAt = (sha, label) => {
+            const perPlugin = Object.entries(manifests).map(([pluginName, paths]) => [
+              pluginName,
+              pluginVersionAt(sha, label, pluginName, paths),
+            ]);
+            const present = perPlugin.filter(([, version]) => version !== null);
+            if (present.length === 0) return { version: null, perPlugin };
+            const versions = present.map(([, version]) => version);
+            if (new Set(versions).size > 1) {
+              throw new Error(`${label} plugin manifest versions do not match: ${present.map(([name, version]) => `${name} ${version}`).join(', ')}`);
+            }
+            return { version: versions[0], perPlugin };
           };
           const compare = (left, right) => {
             const a = left.split('.').map(BigInt);
@@ -66,7 +129,29 @@ jobs:
 
           const base = versionsAt(ref(process.env.BASE_SHA, 'base SHA'), 'public main');
           const candidate = versionsAt(ref(process.env.HEAD_SHA, 'head SHA'), 'candidate');
-          if (compare(candidate, base) <= 0) {
-            throw new Error(`candidate version ${candidate} must be greater than public main ${base}`);
+
+          if (candidate.version === null) {
+            if (base.version !== null) {
+              throw new Error('candidate removes the plugin tree from a released marketplace');
+            }
+            console.log('No plugin tree on either side: governance-only pull request, nothing to gate.');
+            process.exit(0);
           }
+          // At least one plugin survives in the candidate, so the overall
+          // version check below would pass even if a released plugin present
+          // at base was dropped entirely (e.g. cofleet bumps while
+          // cofleet-presence is deleted). Reject that per plugin, not only
+          // when every plugin disappears.
+          for (const [pluginName, baseVersion] of base.perPlugin) {
+            const headVersion = candidate.perPlugin.find(([name]) => name === pluginName)?.[1] ?? null;
+            if (baseVersion !== null && headVersion === null) {
+              throw new Error(`candidate removes plugin from a released marketplace: ${pluginName}`);
+            }
+          }
+          // First release: main has no plugin yet, so any valid version wins.
+          const previous = base.version ?? '0.0.0';
+          if (compare(candidate.version, previous) <= 0) {
+            throw new Error(`candidate version ${candidate.version} must be greater than public main ${previous}`);
+          }
+          console.log(`candidate ${candidate.version} > public main ${previous}`);
           NODE
