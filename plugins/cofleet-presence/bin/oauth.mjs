@@ -123,9 +123,16 @@ async function fetchJson(url, init = {}) {
 }
 
 /** Bind 127.0.0.1:0 and resolve once the port is known. The redirect URI is
- *  built from the assigned port, so nothing can be registered before this. */
+ *  built from the assigned port, so nothing can be registered before this.
+ *  Rejects (rather than leaving the promise pending forever) if the bind
+ *  itself fails — a sandboxed/restricted session denying loopback network
+ *  access is exactly this case. Without the `error` listener, `http.Server`
+ *  emits `'error'` with no listener attached and Node crashes the whole
+ *  process with a raw stack trace; turning it into a rejection lets the
+ *  caller's own error handling (see `reportUnexpectedFailure` in
+ *  cofleet.mjs) print a readable diagnostic instead. */
 function listenLoopback(onCode) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const url = new URL(req.url, 'http://127.0.0.1');
       if (url.pathname !== '/callback') {
@@ -146,7 +153,11 @@ function listenLoopback(onCode) {
       );
       onCode({ code, state, error });
     });
-    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve({ server, port: server.address().port });
+    });
   });
 }
 

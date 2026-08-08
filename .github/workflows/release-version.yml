@@ -36,9 +36,17 @@ jobs:
           import { execFileSync } from 'node:child_process';
 
           const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-          // Per plugin, because the required manifest set differs: cofleet
-          // ships both a Claude and a Codex manifest, cofleet-presence ships
-          // Claude only (it has no Codex packaging).
+          // Per plugin, both a Claude and a Codex manifest. Private validation
+          // (check-release-version.mjs) runs before the public release PR
+          // exists, so it cannot protect against edits made to that PR itself
+          // — this merge-time gate is the only thing that can, and it must
+          // require the Codex manifest at head, not just track it as a nice-
+          // to-have. Mirrors check-release-version.mjs's `versionForPlugin`
+          // shape exactly: index 1 in each list below is always the Codex
+          // manifest, and its absence is tolerated ONLY at the base ref (a
+          // base predating that plugin's Codex packaging) via
+          // `allowMissingCodex`, never at the candidate/head — see
+          // `pluginVersionAt`.
           const manifests = {
             cofleet: [
               'plugins/cofleet/.claude-plugin/plugin.json',
@@ -46,6 +54,7 @@ jobs:
             ],
             'cofleet-presence': [
               'plugins/cofleet-presence/.claude-plugin/plugin.json',
+              'plugins/cofleet-presence/.codex-plugin/plugin.json',
             ],
           };
           const ref = (value, label) => {
@@ -79,7 +88,10 @@ jobs:
               return false;
             }
           };
-          const pluginVersionAt = (sha, label, pluginName, paths) => {
+          // `allowMissingCodex` tolerates index 1 (the Codex manifest) being
+          // absent — the legacy-base case only; every caller of `versionsAt`
+          // below passes it for the base ref and never for head.
+          const pluginVersionAt = (sha, label, pluginName, paths, { allowMissingCodex = false } = {}) => {
             const present = paths.filter((path) => existsAt(sha, path));
             if (present.length === 0) {
               if (pluginTreeExistsAt(sha, pluginName)) {
@@ -87,10 +99,11 @@ jobs:
               }
               return null;
             }
-            if (present.length !== paths.length) {
+            const required = paths.filter((path, index) => !(allowMissingCodex && index === 1));
+            if (required.some((path) => !existsAt(sha, path))) {
               throw new Error(`${label} carries some but not all plugin manifests`);
             }
-            const versions = paths.map((path) => {
+            const versions = present.map((path) => {
               const source = execFileSync('git', ['show', `${sha}:${path}`], { encoding: 'utf8' });
               const version = JSON.parse(source).version;
               if (!semver.test(version ?? '')) throw new Error(`${label} ${path} has an invalid version`);
@@ -104,10 +117,10 @@ jobs:
           // alone cannot tell a head that dropped one released plugin from a
           // head that never touched it: as long as any plugin remains present
           // the resolved version is non-null either way.
-          const versionsAt = (sha, label) => {
+          const versionsAt = (sha, label, { allowMissingCodex = false } = {}) => {
             const perPlugin = Object.entries(manifests).map(([pluginName, paths]) => [
               pluginName,
-              pluginVersionAt(sha, label, pluginName, paths),
+              pluginVersionAt(sha, label, pluginName, paths, { allowMissingCodex }),
             ]);
             const present = perPlugin.filter(([, version]) => version !== null);
             if (present.length === 0) return { version: null, perPlugin };
@@ -127,7 +140,7 @@ jobs:
             return 0;
           };
 
-          const base = versionsAt(ref(process.env.BASE_SHA, 'base SHA'), 'public main');
+          const base = versionsAt(ref(process.env.BASE_SHA, 'base SHA'), 'public main', { allowMissingCodex: true });
           const candidate = versionsAt(ref(process.env.HEAD_SHA, 'head SHA'), 'candidate');
 
           if (candidate.version === null) {
