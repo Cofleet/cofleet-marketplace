@@ -1,0 +1,17 @@
+{
+  "name": "cofleet",
+  "description": "Cofleet plugins for coding agents — project context and code intelligence.",
+  "owner": { "name": "Cofleet" },
+  "plugins": [
+    {
+      "name": "cofleet",
+      "source": "./plugins/cofleet",
+      "description": "Cofleet project context and code intelligence for coding agents"
+    },
+    {
+      "name": "cofleet-presence",
+      "source": "./plugins/cofleet-presence",
+      "description": "Cofleet team presence: after `cofleet login`, sends your prompt as a truncated session title, hostname, git branch, and repo-relative file paths to your team."
+    }
+  ]
+}
