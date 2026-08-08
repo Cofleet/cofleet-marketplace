@@ -10,8 +10,12 @@
 //      preferable to interfering with someone's work.
 //   2. It never forwards its stdin. The `PostToolUse` payload carries
 //      `tool_response` — file contents and command output — and `tool_input`
-//      carries whole commands. Only `file_path` is read out; the rest is
-//      dropped on the floor and never leaves the machine.
+//      carries whole commands. Only a file path is ever read out —
+//      `tool_input.file_path` directly, or (Codex's `apply_patch`, which
+//      carries no `file_path`) the path named on the patch envelope's own
+//      `*** Add/Delete/Update File:`/`*** Move to:` header line, see
+//      `applyPatchFilePaths`. The rest is dropped on the floor and never
+//      leaves the machine; a Bash `tool_input.command` is never parsed.
 //   3. It coalesces. A post per tool call would be a request every few seconds
 //      per developer; instead paths accumulate locally and flush at most once a
 //      minute, plus immediately on the two events that change the title.
@@ -42,25 +46,87 @@
 //   consent — the opposite of the guarantee above.
 //
 //   The fix: a *witness*. Every hook run (which always has CLAUDE_PLUGIN_DATA)
-//   records that install's plugin-data origin directory into a small file in
-//   the stable root — `~/.cofleet/origins/<key>/plugin-data-dir`. `login`,
-//   `status`, `doctor`, and `logout` all resolve the marker's location the
-//   same way: CLAUDE_PLUGIN_DATA when set, else the witnessed directory *only
-//   if it still exists* (never created — that would fabricate consent for an
-//   install that is not there). With neither, the state is unknown, not
-//   "not consented": `login` records no marker and asks for a hook to run
-//   first; `status`/`doctor` say plainly that they cannot see it from this
-//   shell instead of asserting a negative.
+//   records that install's plugin-data origin directory into its own small
+//   file under the stable root — `~/.cofleet/origins/<key>/witnesses/<hash of
+//   the plugin-data dir>` — one entry per install, not one file per origin.
+//   That plurality matters the moment this plugin is installed in more than
+//   one harness on the same machine (Claude Code and Codex, say): each has
+//   its own CLAUDE_PLUGIN_DATA root, so a single shared witness file could
+//   only ever remember whichever install's hook happened to run last,
+//   silently losing track of every other one — the exact bug this scheme
+//   replaces. A build before this fix wrote one unkeyed file at
+//   `~/.cofleet/origins/<key>/plugin-data-dir`; still read (never written
+//   again) so an install that already logged in keeps working.
+//
+//   `login` and `logout`, run from a shell with no CLAUDE_PLUGIN_DATA, act on
+//   every install this origin has a trustworthy witness for — recording or
+//   clearing consent on all of them, never guessing at just one. `status`/
+//   `doctor` do the same when they cannot identify which install this shell
+//   is sitting in: `reporting` only when every witnessed install has
+//   consented, a distinct `mixed` state when some have and some have not
+//   (status must not call that "reporting" — it would be true for some
+//   installs and false for the one the person is actually looking at), and
+//   `unknown` when there is no witness at all yet. Every witnessed directory,
+//   in both layouts, is still only ever trusted *if it still exists* (never
+//   created — that would fabricate consent for an install that is not there)
+//   and passes the same validation as before; extending to many entries does
+//   not loosen that check for any one of them. With neither CLAUDE_PLUGIN_DATA
+//   nor a witnessed install, the state is unknown, not "not consented":
+//   `login` records no marker and asks for a hook to run first; `status`/
+//   `doctor` say plainly that they cannot see it from this shell instead of
+//   asserting a negative.
 //
 //   The gate does not apply to $COFLEET_TOKEN: that is an operator-supplied
 //   process override (CI, a server with OAuth off), not an interactive login
 //   tied to any particular install.
+//
+// CLAUDE_PLUGIN_DATA IS NOT TRUSTWORTHY OUTSIDE A HOOK:
+//
+//   The platform guarantees CLAUDE_PLUGIN_DATA names the running plugin's own
+//   data directory only for the process it launches to run a hook. Any other
+//   process that merely has it in its environment — a terminal a plugin's
+//   hook set it in and left behind, another plugin's subprocess that leaked
+//   it into a shared shell — has no such guarantee. Observed for real: an
+//   unrelated plugin's hook left CLAUDE_PLUGIN_DATA pointing at *that*
+//   plugin's data directory in an interactive shell; `cofleet login` run
+//   there wrote the consent marker into the wrong plugin's directory
+//   entirely, while this plugin's own hooks (which get the correct value
+//   fresh from the platform every time) kept looking in the right one, found
+//   nothing, and stayed silent forever — success was reported, and nothing
+//   was ever sent.
+//
+//   The fix: `login`/`status`/`doctor`/`logout` (never a hook — see
+//   `verifyPluginDataIdentity`) first check whether CLAUDE_PLUGIN_DATA
+//   plausibly names *this* install before trusting it, by comparing it
+//   against this plugin's own identity, derived from where this very file
+//   is running from (`ownPluginDataName`) — a real install's cache layout is
+//   `.../plugins/cache/<marketplace>/<plugin>/<version>/bin/cofleet.mjs`,
+//   and the harness names that install's data directory `<plugin>-<marketplace>`
+//   to match (observed directly: `cofleet-presence-cofleet` for this plugin
+//   from the `cofleet` marketplace, `codex-openai-codex` for the unrelated
+//   plugin above). A mismatch is silently ignored nowhere: it falls through
+//   to the existing witness resolution exactly as if CLAUDE_PLUGIN_DATA were
+//   never set, AND is reported in one line on every command a person reads
+//   (never on `hook`, which must stay silent) — the original bug was a
+//   silent wrong answer, so a silent correction here would just be a
+//   quieter version of the same bug.
+//
+//   Derivation legitimately fails outside a real install: this repo's own
+//   tests run the checkout copy of this file (no `cache/<marketplace>/<plugin>/
+//   <version>` ancestry above it), and so would a copied binary or a plain
+//   `node bin/cofleet.mjs` from a clone. A failed derivation means "cannot
+//   prove this install's identity from its own path," not "reject" — it
+//   falls back to trusting CLAUDE_PLUGIN_DATA exactly as every build before
+//   this fix did. Rejecting only fires when this file's own path proves an
+//   identity AND the environment variable names something else; it never
+//   locks a legitimate session out over an inconclusive check.
 
 import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -69,7 +135,7 @@ import {
 } from 'node:fs';
 import { homedir, hostname, userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   login as oauthLogin,
   normalizeOrigin,
@@ -198,10 +264,86 @@ export function originKey(url) {
   return createHash('sha256').update(normalizeOrigin(url)).digest('hex');
 }
 
-export function originDataDirs(url = configuredBaseUrl()) {
+/** This install's own plugin-data directory *name*, derived from where this
+ *  file is actually running from — never from anything an environment
+ *  variable claims. A real install's cache layout is exactly
+ *  `.../plugins/cache/<marketplace>/<plugin>/<version>/bin/cofleet.mjs`
+ *  (confirmed against a real `~/.claude/plugins/cache` tree), and the
+ *  harness names that install's CLAUDE_PLUGIN_DATA directory
+ *  `<plugin>-<marketplace>` to match — confirmed the same way:
+ *  `cofleet-presence-cofleet` on disk for this plugin from the `cofleet`
+ *  marketplace, `codex-openai-codex` for an unrelated plugin on the same
+ *  machine. Requiring the `cache` ancestor is what makes this fail closed
+ *  (return `null`) rather than derive nonsense for every shape that is not a
+ *  real install: this repo's own tests run the checkout copy of this file,
+ *  four directories short of that ancestry; so would a copied binary or a
+ *  bare `node bin/cofleet.mjs` from a clone. `null` here is the caller's
+ *  signal to fall back to trusting CLAUDE_PLUGIN_DATA as-is — see
+ *  `verifyPluginDataIdentity` — never to reject it. */
+export function ownPluginDataName(scriptPath = fileURLToPath(import.meta.url)) {
+  const binDir = dirname(scriptPath);
+  const versionDir = dirname(binDir);
+  const pluginDir = dirname(versionDir);
+  const marketplaceDir = dirname(pluginDir);
+  const cacheDir = dirname(marketplaceDir);
+  if (basename(cacheDir) !== 'cache') return null;
+  const plugin = basename(pluginDir);
+  const marketplace = basename(marketplaceDir);
+  if (!plugin || !marketplace) return null;
+  return `${plugin}-${marketplace}`;
+}
+
+/** Whether CLAUDE_PLUGIN_DATA should be trusted by a non-hook caller —
+ *  `login`, `status`, `doctor`, `logout`. A hook subprocess never calls this:
+ *  it always has the platform's own correct value for the install whose hook
+ *  is running (see `writeWitness`/`hasConsentMarker`, which read the raw
+ *  environment variable directly), and re-deriving an identity to check it
+ *  against would be pure overhead on a path that must stay fast and silent.
+ *
+ *  Three outcomes:
+ *    - unset: `{ trusted: false, rejected: false }` — nothing to trust or
+ *      reject; every caller already handles a missing value the same way it
+ *      always has.
+ *    - set, and either this install's identity cannot be derived (see
+ *      `ownPluginDataName`) or it matches: `{ trusted: true, rejected: false }`
+ *      — trust it exactly as every build before this fix did. An
+ *      undeterminable identity is not evidence of anything wrong; treating it
+ *      as a rejection would turn every test, dev checkout, and copied binary
+ *      into a false positive.
+ *    - set, this install's identity CAN be derived, and it does not match:
+ *      `{ trusted: false, rejected: true }` — the one case this fix changes.
+ *      Callers must fall through to witness resolution exactly as if the
+ *      variable were unset, and report it — see `foreignPluginDataLine`. */
+function verifyPluginDataIdentity() {
+  const raw = envSelection(process.env, 'CLAUDE_PLUGIN_DATA');
+  if (!raw) return { raw: undefined, trusted: false, rejected: false, ownName: null };
+  const ownName = ownPluginDataName();
+  if (ownName === null || basename(raw) === ownName) {
+    return { raw, trusted: true, rejected: false, ownName };
+  }
+  return { raw, trusted: false, rejected: true, ownName };
+}
+
+/** CLAUDE_PLUGIN_DATA, but only when `verifyPluginDataIdentity` trusts it —
+ *  the single value every non-hook reader of the environment variable should
+ *  use from here on. `undefined` covers both "unset" and "rejected": the
+ *  callers below (`originDataDirs`, `legacyDataRoots`, `resolveMarkerDir`)
+ *  already treat an undefined plugin-data value as "fall back to the stable
+ *  root / the witness," which is exactly the desired behavior for a
+ *  rejection too. */
+function trustedPluginData() {
+  const { raw, trusted } = verifyPluginDataIdentity();
+  return trusted ? raw : undefined;
+}
+
+/** `dirs[0]` is the plugin-data-scoped candidate, present only when
+ *  `pluginData` is given — callers on the hook path (always trustworthy, see
+ *  `verifyPluginDataIdentity`) pass the raw environment value explicitly;
+ *  every other caller relies on the default, which is already filtered
+ *  through identity verification. */
+export function originDataDirs(url = configuredBaseUrl(), pluginData = trustedPluginData()) {
   const key = originKey(url);
   const dirs = [];
-  const pluginData = envSelection(process.env, 'CLAUDE_PLUGIN_DATA');
   if (pluginData) dirs.push(join(pluginData, 'origins', key));
   const stable = join(stableDataRoot(), 'origins', key);
   if (!dirs.includes(stable)) dirs.push(stable);
@@ -212,9 +354,8 @@ function stableOriginDataDir(url = configuredBaseUrl()) {
   return join(stableDataRoot(), 'origins', originKey(url));
 }
 
-function legacyDataRoots() {
+function legacyDataRoots(pluginData = trustedPluginData()) {
   const roots = [];
-  const pluginData = envSelection(process.env, 'CLAUDE_PLUGIN_DATA');
   if (pluginData) roots.push(pluginData);
   const stable = stableDataRoot();
   if (!roots.includes(stable)) roots.push(stable);
@@ -226,13 +367,41 @@ function isProduction(url = configuredBaseUrl()) {
 }
 
 const MARKER_FILENAME = 'consented';
+/** The build before this fix wrote a single unkeyed witness file here — no
+ *  install identity in the name, so a second install silently overwrote the
+ *  first one's entry (the bug this file now fixes). Still read (never
+ *  written again) so an install that already logged in under that build
+ *  keeps working; `logout` still sweeps it up. */
 const WITNESS_FILENAME = 'plugin-data-dir';
+/** Per-install witnesses live here instead — one file per install, see
+ *  `witnessEntryPath`. */
+const WITNESS_DIRNAME = 'witnesses';
+/** Bound on how many entries `witnessEntryFiles` will ever read on one call.
+ *  Not a trust boundary — every entry is still validated by
+ *  `isTrustedWitnessTarget` before its content is used for anything — just a
+ *  resource limit, so a directory stuffed with junk (an attacker able to
+ *  write under the stable root, or a runaway process) cannot make every
+ *  `login`/`status`/`logout` do unbounded work. Real machines run a small,
+ *  fixed number of coding-agent harnesses. */
+const MAX_WITNESS_ENTRIES = 64;
 /** Written by a build that predates the witness. No longer read for
  *  anything — `logout` sweeps it up as garbage; nothing else looks at it. */
 const LEGACY_PENDING_MARKER_FILENAME = 'consent-pending';
 
 function witnessPath(url = configuredBaseUrl()) {
   return join(stableOriginDataDir(url), WITNESS_FILENAME);
+}
+
+function witnessesDir(url = configuredBaseUrl()) {
+  return join(stableOriginDataDir(url), WITNESS_DIRNAME);
+}
+
+/** Stable filename for one install's witness entry: a hash of the install's
+ *  own plugin-data marker directory, never the raw path — a path is not a
+ *  safe filename, and would also spell out install-local directory names
+ *  into a directory listing for no reason. */
+function witnessEntryPath(url, dir) {
+  return join(witnessesDir(url), createHash('sha256').update(dir).digest('hex'));
 }
 
 function legacyPendingMarkerPath(url = configuredBaseUrl()) {
@@ -242,21 +411,26 @@ function legacyPendingMarkerPath(url = configuredBaseUrl()) {
 /** Record which plugin-data origin directory the current install uses, so a
  *  later non-hook process (a terminal `login`/`status`/`doctor`/`logout`)
  *  can find it without CLAUDE_PLUGIN_DATA. Called on every hook run — the
- *  only path guaranteed to have the env var. Writes only when the content
- *  differs, and never lets a failure escape: a hook must never disrupt a
- *  session over a diagnostic file. */
+ *  only path guaranteed to have the env var. Writes only this install's own
+ *  entry (see `witnessEntryPath`) — a hook must never touch another
+ *  install's witness — and only when the content differs. Never lets a
+ *  failure escape: a hook must never disrupt a session over a diagnostic
+ *  file. Reads CLAUDE_PLUGIN_DATA raw, never through `trustedPluginData` — a
+ *  hook always has the platform's own correct value for the install whose
+ *  hook is running; see the identity check's own doc comment for why it
+ *  exists only for `login`/`status`/`doctor`/`logout`. */
 function writeWitness(url = configuredBaseUrl()) {
   const pluginData = envSelection(process.env, 'CLAUDE_PLUGIN_DATA');
   if (!pluginData) return;
-  const dir = originDataDirs(url)[0];
+  const dir = originDataDirs(url, pluginData)[0];
   try {
     // The directory itself is what `login`'s fallback checks for existence
-    // (see `witnessedDataDir`). Creating it here is not fabricating consent
+    // (see `witnessedDataDirs`). Creating it here is not fabricating consent
     // — CLAUDE_PLUGIN_DATA being set is the platform's own proof this install
     // is really present, and this hook run is real evidence of that, not a
     // guess. `login` still never creates it on its own — see there.
     mkdirSync(dir, { recursive: true });
-    const path = witnessPath(url);
+    const path = witnessEntryPath(url, dir);
     let existing = null;
     try {
       existing = readFileSync(path, 'utf8').trim();
@@ -307,42 +481,87 @@ function isTrustedWitnessTarget(dir, url) {
   return isRealDirectory(originsStat) && isRealDirectory(dirStat);
 }
 
-/** The witnessed plugin-data origin directory, but only when it still
- *  exists AND is trustworthy. A directory the witness remembers but that is
- *  gone (or was never there, or fails validation) must never be treated as
- *  this install's marker location — that would fabricate consent for an
- *  install that is not present, or write through content an attacker
- *  supplied. */
-function witnessedDataDir(url = configuredBaseUrl()) {
+/** Every existing witness-entry file under this origin's `witnesses/`
+ *  directory, up to `MAX_WITNESS_ENTRIES` — one per install that has ever run
+ *  a hook here, in whatever order `readdirSync` returns. An entry that is not
+ *  a real regular file (a symlink someone planted in the directory, in
+ *  particular) is skipped by `lstat`-ing it before ever reading through it —
+ *  the same "refuse a symlink" rule applied everywhere else in this file,
+ *  here applied to the directory itself rather than only its content. */
+function witnessEntryFiles(url = configuredBaseUrl()) {
+  let names;
   try {
-    const dir = readFileSync(witnessPath(url), 'utf8').trim();
-    if (!dir) return null;
-    return isTrustedWitnessTarget(dir, url) ? dir : null;
+    names = readdirSync(witnessesDir(url));
   } catch {
-    return null;
+    return [];
   }
+  const files = [];
+  for (const name of names.slice(0, MAX_WITNESS_ENTRIES)) {
+    const path = join(witnessesDir(url), name);
+    let stat;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    files.push(path);
+  }
+  return files;
 }
 
-/** Where the install-generation marker lives, resolved the same way by every
- *  caller: CLAUDE_PLUGIN_DATA when set (always true under a hook) AND its
- *  root still really there, otherwise the witnessed directory if it still
- *  exists. Null means neither source is available — the marker's location
- *  is unknown from here, not "absent". The CLAUDE_PLUGIN_DATA root check
+/** Every install this origin has a trustworthy witness for — the current
+ *  per-install layout plus the single legacy file a build before this fix
+ *  wrote (see `WITNESS_FILENAME`) — deduplicated. A directory a witness
+ *  names but that is gone (or was never there, or fails
+ *  `isTrustedWitnessTarget`) never appears here: that would fabricate
+ *  consent for an install that is not present, or write through content an
+ *  attacker supplied. Order is not meaningful; callers that treat "this
+ *  shell's own install" specially do so through `resolveMarkerDir`
+ *  (CLAUDE_PLUGIN_DATA) instead, never by picking an element of this list. */
+function witnessedDataDirs(url = configuredBaseUrl()) {
+  const dirs = [];
+  const addIfTrusted = (raw) => {
+    const dir = typeof raw === 'string' ? raw.trim() : '';
+    if (dir && isTrustedWitnessTarget(dir, url) && !dirs.includes(dir)) dirs.push(dir);
+  };
+  for (const path of witnessEntryFiles(url)) {
+    try {
+      addIfTrusted(readFileSync(path, 'utf8'));
+    } catch {
+      // Gone or unreadable between the listing and the read — skip it.
+    }
+  }
+  try {
+    addIfTrusted(readFileSync(witnessPath(url), 'utf8'));
+  } catch {
+    // No legacy witness — normal for an install created after this fix.
+  }
+  return dirs;
+}
+
+/** Where the install-generation marker lives when CLAUDE_PLUGIN_DATA
+ *  identifies exactly one install — always true under a hook, and also true
+ *  for `login`/`status`/`doctor`/`logout` run from inside an agent session
+ *  whose CLAUDE_PLUGIN_DATA verifies as this install's own (see
+ *  `verifyPluginDataIdentity`; a rejected value is treated exactly like an
+ *  unset one here, never like a valid one pointed somewhere wrong). Null
+ *  when the env var is unset or rejected (the no-env-var callers each fall
+ *  back to `witnessedDataDirs`, which may name several installs — a single
+ *  `dir` cannot represent that) or when its root is not really there, which
  *  matters because `mkdirSync` downstream would otherwise resurrect a wiped
  *  install directory just to write a marker into it. */
 function resolveMarkerDir(url = configuredBaseUrl()) {
-  const pluginData = envSelection(process.env, 'CLAUDE_PLUGIN_DATA');
-  if (pluginData) {
-    let stat;
-    try {
-      stat = lstatSync(pluginData);
-    } catch {
-      return null;
-    }
-    if (!isRealDirectory(stat)) return null;
-    return originDataDirs(url)[0];
+  const pluginData = trustedPluginData();
+  if (!pluginData) return null;
+  let stat;
+  try {
+    stat = lstatSync(pluginData);
+  } catch {
+    return null;
   }
-  return witnessedDataDir(url);
+  if (!isRealDirectory(stat)) return null;
+  return originDataDirs(url, pluginData)[0];
 }
 
 /** Whether `path` is a real (non-symlink) directory, without throwing on a
@@ -404,18 +623,14 @@ export function cleanupResurrectedMarker(dir, path, originsExisted, dirExisted) 
   }
 }
 
-/** The half of `writeConsentMarker` that runs *before* the racy `mkdirSync`:
- *  resolves the marker directory and captures the plugin-data root's
- *  identity while it is still trusted to exist. Returns `null` when the
- *  location cannot be resolved, or when the root is confirmed gone the
- *  instant before we would touch the filesystem — the tightest form of the
- *  race, caught before any write is attempted. Split out from
- *  `commitConsentMarker` so a test can deterministically land an uninstall
- *  in between the two, the same window an unlucky real one could land in. */
-export function prepareConsentMarker(url = configuredBaseUrl()) {
-  const dir = resolveMarkerDir(url);
-  if (!dir) return null;
-
+/** The `dir`-taking core of `prepareConsentMarker`: captures the plugin-data
+ *  root's identity while it is still trusted to exist, for a marker
+ *  directory the caller has already resolved (directly from
+ *  CLAUDE_PLUGIN_DATA, or one of several from `witnessedDataDirs`). Returns
+ *  `null` when the root is confirmed gone the instant before we would touch
+ *  the filesystem — the tightest form of the race, caught before any write
+ *  is attempted. */
+function prepareConsentMarkerForDir(dir) {
   const root = markerRootFor(dir);
   let rootBefore;
   try {
@@ -427,6 +642,17 @@ export function prepareConsentMarker(url = configuredBaseUrl()) {
   const originsExisted = existsRealDirectory(dirname(dir));
   const dirExisted = originsExisted && existsRealDirectory(dir);
   return { dir, root, rootBefore, originsExisted, dirExisted };
+}
+
+/** The half of `writeConsentMarker` that runs *before* the racy `mkdirSync`,
+ *  for the single install CLAUDE_PLUGIN_DATA identifies. Returns `null` when
+ *  the location cannot be resolved. Split out from `commitConsentMarker` so a
+ *  test can deterministically land an uninstall in between the two, the same
+ *  window an unlucky real one could land in. */
+export function prepareConsentMarker(url = configuredBaseUrl()) {
+  const dir = resolveMarkerDir(url);
+  if (!dir) return null;
+  return prepareConsentMarkerForDir(dir);
 }
 
 /** The half of `writeConsentMarker` that performs the write and its
@@ -478,42 +704,90 @@ export function commitConsentMarker({ dir, root, rootBefore, originsExisted, dir
   return 'ok';
 }
 
-/** Record consent for a successful login. See `prepareConsentMarker` and
- *  `commitConsentMarker` for what each half does and why; `'unresolved'`
- *  (no CLAUDE_PLUGIN_DATA and no usable witness yet, or the root already
- *  gone) is not the same problem as a `'refused'` write — it is the
+/** Record consent for a successful login. With CLAUDE_PLUGIN_DATA set, this
+ *  is exactly the pre-fix behavior — see `prepareConsentMarker` and
+ *  `commitConsentMarker` for what each half does and why: that one install,
+ *  and only that install. Without it, this is what makes a terminal `login`
+ *  correct on a machine running this plugin in more than one harness: every
+ *  install this shell has a trustworthy witness for (`witnessedDataDirs`)
+ *  gets marked, not just whichever one a single shared witness used to
+ *  remember. `count` is how many installs actually got marked, for the
+ *  success message.
+ *
+ *  `result: 'unresolved'` (no CLAUDE_PLUGIN_DATA and no witnessed install at
+ *  all yet) is not the same problem as `'refused'` (at least one location
+ *  resolved but every write to it was refused) — `'unresolved'` is the
  *  permanent state of a headless box that will never run a hook here, and
- *  `runLogin`'s static-token form has an operator-supplied way around it. */
+ *  `runLogin`'s static-token form has an operator-supplied way around it.
+ *  `'refused'` with `count > 0` (some installs marked, others refused) still
+ *  reads as an overall success — see `runLogin`. */
 function writeConsentMarker(url = configuredBaseUrl()) {
   const prepared = prepareConsentMarker(url);
-  if (!prepared) return 'unresolved';
-  return commitConsentMarker(prepared);
+  if (prepared) {
+    const result = commitConsentMarker(prepared);
+    return { result, count: result === 'ok' ? 1 : 0 };
+  }
+
+  const dirs = witnessedDataDirs(url);
+  if (dirs.length === 0) return { result: 'unresolved', count: 0 };
+
+  let okCount = 0;
+  for (const dir of dirs) {
+    const forDir = prepareConsentMarkerForDir(dir);
+    if (forDir && commitConsentMarker(forDir) === 'ok') okCount += 1;
+  }
+  return { result: okCount > 0 ? 'ok' : 'refused', count: okCount };
 }
 
 /** The hook gate: true only when CLAUDE_PLUGIN_DATA is set AND the marker
  *  exists in that exact directory. Hooks never consult the witness for this
- *  — they are the ones that write it, and always have the env var. */
+ *  — they are the ones that write it, and always have the env var. Reads it
+ *  raw, like `writeWitness` — a hook's CLAUDE_PLUGIN_DATA needs no identity
+ *  check, see `verifyPluginDataIdentity`. */
 function hasConsentMarker(url = configuredBaseUrl()) {
-  if (!envSelection(process.env, 'CLAUDE_PLUGIN_DATA')) return false;
+  const pluginData = envSelection(process.env, 'CLAUDE_PLUGIN_DATA');
+  if (!pluginData) return false;
   try {
-    return lstatSync(join(originDataDirs(url)[0], MARKER_FILENAME)).isFile();
+    return lstatSync(join(originDataDirs(url, pluginData)[0], MARKER_FILENAME)).isFile();
   } catch {
     return false;
   }
 }
 
-/** For `status`/`doctor`/`logout`, which may run from a terminal with no
- *  CLAUDE_PLUGIN_DATA: `'consented'` and `'none'` are both resolved answers
- *  (the marker directory is known, present or not); `'unknown'` means this
- *  shell cannot see it at all yet — no env var and no witness. */
+/** For `status`/`doctor`, resolved the same two ways as `writeConsentMarker`:
+ *  directly through CLAUDE_PLUGIN_DATA when it identifies exactly one
+ *  install, else aggregated across every install `witnessedDataDirs` names.
+ *
+ *  `'consented'` and `'none'` are resolved answers in both cases (the marker
+ *  location(s) are known, present or not everywhere). `'unknown'` means this
+ *  shell cannot see any install at all — no env var and no witness.
+ *  `'mixed'` (aggregate path only) means some witnessed installs have
+ *  consented and some have not: this shell cannot tell which install it is
+ *  actually sitting in, so it must not report `'consented'` — that would be
+ *  true for some installs and false for the one someone is looking at. */
 function consentState(url = configuredBaseUrl()) {
-  const dir = resolveMarkerDir(url);
-  if (!dir) return 'unknown';
-  try {
-    return lstatSync(join(dir, MARKER_FILENAME)).isFile() ? 'consented' : 'none';
-  } catch {
-    return 'none';
+  const direct = resolveMarkerDir(url);
+  if (direct) {
+    try {
+      return lstatSync(join(direct, MARKER_FILENAME)).isFile() ? 'consented' : 'none';
+    } catch {
+      return 'none';
+    }
   }
+
+  const dirs = witnessedDataDirs(url);
+  if (dirs.length === 0) return 'unknown';
+  let consentedCount = 0;
+  for (const dir of dirs) {
+    try {
+      if (lstatSync(join(dir, MARKER_FILENAME)).isFile()) consentedCount += 1;
+    } catch {
+      // Not consented in this one.
+    }
+  }
+  if (consentedCount === 0) return 'none';
+  if (consentedCount === dirs.length) return 'consented';
+  return 'mixed';
 }
 
 /** Where every successful static-token write lands. */
@@ -642,7 +916,10 @@ function statePath(sessionId) {
   const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
   // Hook-owned transient state follows the selected origin and prefers the
   // harness-provided data root. Credentials are still written to ~/.cofleet.
-  return join(originDataDirs()[0], 'sessions', `${safe}.json`);
+  // Only ever called from the hook path (see readState/writeState below), so
+  // this reads CLAUDE_PLUGIN_DATA raw — same reasoning as `writeWitness`.
+  const pluginData = envSelection(process.env, 'CLAUDE_PLUGIN_DATA');
+  return join(originDataDirs(undefined, pluginData)[0], 'sessions', `${safe}.json`);
 }
 
 function readState(sessionId) {
@@ -725,6 +1002,29 @@ function repoRelative(cwd, filePath) {
   return rel.split(sep).join('/');
 }
 
+/** Codex's own file-edit tool (`apply_patch`) carries no `tool_input.file_path`
+ *  at all — verified against a real captured payload from a live Codex
+ *  session: `tool_input` is `{ command: "*** Begin Patch\n*** Update File:
+ *  README.md\n@@\n+test line\n*** End Patch" }`. What it does carry is a
+ *  fixed patch envelope: every file the patch touches is named on its own
+ *  `*** Add File: <path>` / `*** Delete File: <path>` / `*** Update File:
+ *  <path>` header line, with a rename's destination on a following `*** Move
+ *  to: <path>` line. That header is a structured, stable sentinel format —
+ *  not arbitrary shell text — so extracting it is the one Codex
+ *  `PostToolUse` case worth parsing; a Bash `tool_input.command` is never
+ *  attempted here (see the file-header contract at the top of this file).
+ *  Returns every path named, in order; each is still run through
+ *  `repoRelative` by the caller before being trusted. */
+function applyPatchFilePaths(patchText) {
+  if (typeof patchText !== 'string') return [];
+  const paths = [];
+  for (const line of patchText.split('\n')) {
+    const match = /^\*\*\* (?:Add|Delete|Update) File: (.+)$|^\*\*\* Move to: (.+)$/.exec(line);
+    if (match) paths.push((match[1] ?? match[2]).trim());
+  }
+  return paths;
+}
+
 // ---------- the hook path ----------
 
 async function readStdin() {
@@ -746,6 +1046,34 @@ async function post(body, token, timeoutMs = REQUEST_TIMEOUT_MS) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Which coding agent invoked this hook subprocess: `'codex'` or
+ *  `'claude_code'` (the wire values `LocalAgentHarness` accepts, alongside
+ *  `'flow_cli'` and `'other'` this reporter never sends).
+ *
+ *  Verified empirically, not assumed — captured a real hook subprocess's full
+ *  environment under both harnesses (an isolated `CODEX_HOME`-installed
+ *  plugin driven through `codex exec`, and an isolated `CLAUDE_CONFIG_DIR`
+ *  session driven through `claude -p`/`--plugin-dir`, both with the ambient
+ *  shell wiped via `env -i` first so nothing leaked in from the invoking
+ *  terminal). Codex sets four Claude-namespaced-or-not variables on every
+ *  hook subprocess: the `CLAUDE_PLUGIN_ROOT`/`CLAUDE_PLUGIN_DATA`
+ *  compatibility pair this file already keys off of elsewhere, AND its own
+ *  bare `PLUGIN_ROOT`/`PLUGIN_DATA` (no `CLAUDE_` prefix) pointing at the
+ *  same paths. Claude Code's hook subprocess sets only the `CLAUDE_`-prefixed
+ *  pair — never a bare `PLUGIN_ROOT` or `PLUGIN_DATA`. `PLUGIN_ROOT` is
+ *  therefore Codex-exclusive, and — unlike `CLAUDECODE`/`CLAUDE_CODE_*`,
+ *  which a Codex session merely launched from inside a Claude Code terminal
+ *  can inherit from its parent shell — it is assigned fresh by whichever
+ *  harness is directly running this specific hook subprocess, not inherited
+ *  from an ambient wrapper. It is also structurally guaranteed present:
+ *  Codex only ever invokes this hook as part of resolving cofleet-presence's
+ *  own plugin hooks, and it sets `PLUGIN_ROOT` for every plugin hook it
+ *  runs, not something specific to this test setup. No `CODEX_*` variable
+ *  was present in the hook's env at all under an isolated `CODEX_HOME`. */
+function detectHarness() {
+  return envSelection(process.env, 'PLUGIN_ROOT') ? 'codex' : 'claude_code';
 }
 
 async function runHook() {
@@ -774,13 +1102,21 @@ async function runHook() {
   const event = payload.hook_event_name;
   const state = readState(sessionId);
 
-  const body = { sessionId, harness: 'claude_code' };
+  const body = { sessionId, harness: detectHarness() };
   let force = false;
 
   if (event === 'SessionStart') {
-    // No prompt has been typed yet, so the directory is the most honest title
-    // available. The first UserPromptSubmit replaces it.
-    body.title = cleanTitle(basename(cwd));
+    // On a genuine start (no prompt typed yet) the directory is the most
+    // honest title available; the first UserPromptSubmit replaces it. Both
+    // harnesses also fire SessionStart mid-session with `source: 'compact'`
+    // after automatic context compaction — by then a real prompt-derived
+    // title already exists, so resetting it to the bare directory name here
+    // would silently clobber it on every compaction. Only reset the title
+    // when this is not a compaction replay; machine/worktree are harmless
+    // facts to refresh either way.
+    if (payload.source !== 'compact') {
+      body.title = cleanTitle(basename(cwd));
+    }
     body.machine = machineName();
     body.worktree = branchName(cwd);
     force = true;
@@ -794,9 +1130,21 @@ async function runHook() {
     body.title = cleanTitle(payload.prompt) ?? cleanTitle(payload.session_title);
     force = true;
   } else if (event === 'PostToolUse') {
-    const rel = repoRelative(cwd, payload.tool_input?.file_path);
-    if (rel && !state.pending.includes(rel)) {
-      state.pending = [...state.pending, rel].slice(-MAX_PENDING_PATHS);
+    // Claude Code's Edit/Write/Read/NotebookEdit tools carry `file_path`.
+    // Codex's `apply_patch` (aliased into this same matcher — see
+    // `applyPatchFilePaths`) carries none; its patch envelope is parsed
+    // instead. A Bash `tool_input.command` is deliberately never parsed here.
+    const filePaths =
+      typeof payload.tool_input?.file_path === 'string'
+        ? [payload.tool_input.file_path]
+        : payload.tool_name === 'apply_patch'
+          ? applyPatchFilePaths(payload.tool_input?.command)
+          : [];
+    for (const filePath of filePaths) {
+      const rel = repoRelative(cwd, filePath);
+      if (rel && !state.pending.includes(rel)) {
+        state.pending = [...state.pending, rel].slice(-MAX_PENDING_PATHS);
+      }
     }
   }
 
@@ -818,6 +1166,30 @@ async function runHook() {
 }
 
 // ---------- user-facing subcommands ----------
+
+/** The one line `login`/`status`/`doctor` print when CLAUDE_PLUGIN_DATA was
+ *  set but rejected as another install's data directory (see
+ *  `verifyPluginDataIdentity`) — `null` when nothing was rejected (unset, or
+ *  it verified as this install's own), so the common case prints nothing
+ *  new. Names the rejected value and where consent is being resolved
+ *  instead, so a silent wrong answer never becomes a silent right one — see
+ *  the CLAUDE_PLUGIN_DATA contract note at the top of this file. */
+function foreignPluginDataLine(url = configuredBaseUrl()) {
+  const check = verifyPluginDataIdentity();
+  if (!check.rejected) return null;
+  const witnessed = witnessedDataDirs(url);
+  const using =
+    witnessed.length === 0
+      ? 'no witnessed install yet for this origin'
+      : witnessed.length === 1
+        ? witnessed[0]
+        : `${witnessed.length} witnessed installs on this machine`;
+  return (
+    `Ignored CLAUDE_PLUGIN_DATA (${check.raw}) — that is a different ` +
+    `plugin's data directory, not this install's (expected one named ` +
+    `"${check.ownName}"). Using ${using} instead.`
+  );
+}
 
 async function runLogin(argument) {
   // Validate before any credential write. In particular, an invalid operator
@@ -849,21 +1221,34 @@ async function runLogin(argument) {
     `  export COFLEET_TOKEN_ORIGIN='${selectedBaseUrl}'\n` +
     `The hook gate exempts $COFLEET_TOKEN — no per-install consent needed.\n`;
 
+  // `count > 1` means CLAUDE_PLUGIN_DATA was unset and more than one
+  // witnessed install got marked — say so, since "reporting" alone would
+  // undersell what a machine with two harnesses installed just did.
+  const reportingLine = (count) =>
+    `Work sessions will report to ${selectedBaseUrl}` +
+    (count > 1 ? ` from ${count} installs on this machine.\n` : `.\n`);
+
+  // Computed once, before either branch writes anything, so the notice
+  // reflects the shell's actual CLAUDE_PLUGIN_DATA rather than anything a
+  // write below might touch.
+  const foreignNotice = foreignPluginDataLine(selectedBaseUrl);
+
   if (argument) {
     const token = argument.trim();
     const path = tokenPath(selectedBaseUrl);
     writePrivateFile(path, `${token}\n`);
     const consentResult = writeConsentMarker(selectedBaseUrl);
     process.stdout.write(`Saved a static token.\n`);
-    if (consentResult === 'unresolved') {
+    if (foreignNotice) process.stdout.write(`${foreignNotice}\n`);
+    if (consentResult.result === 'unresolved') {
       process.stdout.write(operatorTokenMessage(token));
       return 0;
     }
-    if (consentResult === 'refused') {
+    if (consentResult.result === 'refused') {
       process.stdout.write(MARKER_REFUSED_MESSAGE);
       return 1;
     }
-    process.stdout.write(`Work sessions will report to ${selectedBaseUrl}.\n`);
+    process.stdout.write(reportingLine(consentResult.count));
     return 0;
   }
 
@@ -875,14 +1260,15 @@ async function runLogin(argument) {
   writeCredentials(result.credentials);
   const consentResult = writeConsentMarker(selectedBaseUrl);
   process.stdout.write(`Connected. Credentials: ${credentialsPath()}\n`);
-  if (consentResult !== 'ok') {
+  if (foreignNotice) process.stdout.write(`${foreignNotice}\n`);
+  if (consentResult.result !== 'ok') {
     // The interactive OAuth branch keeps exit 1 either way (unresolved or
     // refused): it always runs inside a Claude Code session with a human at
     // the keyboard, so there is no headless-box case to route around here.
     process.stdout.write(NO_MARKER_TARGET_MESSAGE);
     return 1;
   }
-  process.stdout.write(`Work sessions will report to ${selectedBaseUrl}.\n`);
+  process.stdout.write(reportingLine(consentResult.count));
   return 0;
 }
 
@@ -896,12 +1282,12 @@ const DIAGNOSIS = {
   429: ['warn', 'Rate limited right now, but the credential and the endpoint are both fine.'],
 };
 
-/** The three `consentState` answers, each carrying everything both readers
+/** The four `consentState` answers, each carrying everything both readers
  *  need: the short phrase `status`/`doctor`'s one-liner uses, and — for
  *  `doctor` only — the extra diagnostic lines and exit code to stop on
  *  rather than proceeding to the live probe (`null` means "proceed", the
- *  `consented` case). One map instead of two hand-written `if`/`if` chains,
- *  so `runDoctor` cannot fall past both checks into the probe for a state
+ *  `consented` case). One map instead of hand-written `if`/`if` chains, so
+ *  `runDoctor` cannot fall past every check into the probe for a state
  *  nobody handled — `consentStateInfo` fails closed on anything not listed
  *  here rather than defaulting to "proceed". */
 const CONSENT_STATE_INFO = {
@@ -919,6 +1305,24 @@ const CONSENT_STATE_INFO = {
       ],
     },
   },
+  // Aggregate path only (no CLAUDE_PLUGIN_DATA, more than one witnessed
+  // install): some have consented and some have not, and this shell cannot
+  // tell which install it is actually sitting in. Distinct from `none` (no
+  // witnessed install has consented — `login` will fix all of them) and from
+  // `unknown` (no witnessed install at all) — collapsing this into either
+  // would either wrongly say "reporting" for the person's own harness some
+  // of the time, or wrongly say nothing has consented when something has.
+  mixed: {
+    statusText:
+      'logged in — consented on some installs on this machine but not all; run `cofleet status` inside the agent session to check this one, or `cofleet login` here to cover every install',
+    doctorStop: {
+      exitCode: 1,
+      lines: [
+        `  reporting:  FAIL — consented on some installs on this machine, but this shell cannot tell which install it is.`,
+        `              Run \`cofleet doctor\` inside the agent session to check this one, or \`cofleet login\` here to cover every install.`,
+      ],
+    },
+  },
   unknown: {
     statusText:
       'logged in — cannot verify consent from this shell; start a Claude Code session, then run `cofleet login` again',
@@ -933,7 +1337,7 @@ const CONSENT_STATE_INFO = {
 };
 
 /** Fail-closed lookup: any `consentState` result not in the map above (there
- *  should never be one — `consentState` itself is total over the same three
+ *  should never be one — `consentState` itself is total over the same four
  *  values) reads as "not reporting", never as "proceed to the probe". */
 function consentStateInfo(state) {
   return (
@@ -960,6 +1364,8 @@ async function runDoctor() {
     `  server:     ${selectedBaseUrl}`,
     `  data dir:   ${stableOriginDataDir(selectedBaseUrl)}`,
   ];
+  const foreignNotice = foreignPluginDataLine(selectedBaseUrl);
+  if (foreignNotice) lines.push(`  note:       ${foreignNotice}`);
   lines.push(`  credential: ${describeCredential()}`);
 
   const token = await currentToken();
@@ -1015,11 +1421,13 @@ function describeCredential() {
   return `OAuth (from ${source}, ${state})`;
 }
 
-/** The four states a person can act on: no credential at all, a credential
- *  this install has not consented for (post-reinstall), a credential whose
- *  consent this shell simply cannot verify yet (no CLAUDE_PLUGIN_DATA and no
- *  witness), and reporting. $COFLEET_TOKEN is exempt from the marker gate
- *  entirely — see the exemption below. */
+/** No credential at all, a credential this install has not consented for
+ *  (post-reinstall), a credential whose consent this shell simply cannot
+ *  verify yet (no CLAUDE_PLUGIN_DATA and no witness), reporting, and — on a
+ *  machine with more than one witnessed install — the `mixed` state where
+ *  only some of them have consented (see `CONSENT_STATE_INFO`).
+ *  $COFLEET_TOKEN is exempt from the marker gate entirely — see the
+ *  exemption below. */
 function describeReportingState(url = configuredBaseUrl()) {
   const resolved = resolveToken(url);
   if (!resolved.token) return 'not logged in';
@@ -1029,30 +1437,44 @@ function describeReportingState(url = configuredBaseUrl()) {
 
 function runStatus() {
   const selectedBaseUrl = baseUrl();
+  const foreignNotice = foreignPluginDataLine(selectedBaseUrl);
   process.stdout.write(
     `Cofleet plugin\n` +
       `  server:     ${selectedBaseUrl}\n` +
       `  data dir:   ${stableOriginDataDir(selectedBaseUrl)}\n` +
+      (foreignNotice ? `  note:       ${foreignNotice}\n` : '') +
       `  credential: ${describeCredential()}\n` +
       `  status:     ${describeReportingState(selectedBaseUrl)}\n`,
   );
 }
 
 /** Sweep every credential path for the selected origin — not one file. Also
- *  clears the marker (resolved the same way every other reader resolves it)
- *  and the witness, so a stale consent record never outlives its credential,
- *  plus any leftover marker from a build that predates the witness. Collects
- *  failures instead of aborting the sweep on the first one: a non-ENOENT
- *  error (EACCES/EPERM/EROFS) on an early candidate must not leave every
- *  later candidate untouched. Idempotent: a second run finds nothing and
- *  exits 0 having removed nothing. */
+ *  clears the marker for every install this origin has a trustworthy witness
+ *  for, plus (when CLAUDE_PLUGIN_DATA identifies one directly) this shell's
+ *  own — symmetric with `login`'s "act on every install" behavior, so a
+ *  logout run from one harness does not leave another harness on the same
+ *  machine still consented. Also clears every witness entry itself (both the
+ *  current per-install layout and the single legacy file), so a stale
+ *  consent record never outlives its credential and a later `status` never
+ *  misreads a leftover witness, plus any leftover marker from a build that
+ *  predates the witness entirely. Collects failures instead of aborting the
+ *  sweep on the first one: a non-ENOENT error (EACCES/EPERM/EROFS) on an
+ *  early candidate must not leave every later candidate untouched.
+ *  Idempotent: a second run finds nothing and exits 0 having removed
+ *  nothing. */
 async function runLogout() {
   const selectedBaseUrl = baseUrl();
-  const markerDir = resolveMarkerDir(selectedBaseUrl);
+  const markerDirs = [];
+  const direct = resolveMarkerDir(selectedBaseUrl);
+  if (direct) markerDirs.push(direct);
+  for (const dir of witnessedDataDirs(selectedBaseUrl)) {
+    if (!markerDirs.includes(dir)) markerDirs.push(dir);
+  }
   const candidates = [
     ...credentialsCandidates(selectedBaseUrl),
     ...tokenCandidates(selectedBaseUrl),
-    ...(markerDir ? [join(markerDir, MARKER_FILENAME)] : []),
+    ...markerDirs.map((dir) => join(dir, MARKER_FILENAME)),
+    ...witnessEntryFiles(selectedBaseUrl),
     witnessPath(selectedBaseUrl),
     legacyPendingMarkerPath(selectedBaseUrl),
   ];
@@ -1080,6 +1502,35 @@ async function runLogout() {
 
 // ---------- entry ----------
 
+/** Only `login`/`logout`/`doctor` ever reach here — the hook path's own
+ *  `.catch(() => {})` is untouched, per the contract at the top of this file.
+ *
+ *  Every one of those three commands used to fall back to a bare `.catch(()
+ *  => 1)`: a permission/sandbox denial (a blocked outbound HTTPS call, a
+ *  blocked loopback bind, a blocked write under `~/.cofleet`) throws or
+ *  rejects instead of returning a handled `{ ok: false, reason }`, and that
+ *  fell straight through to `exit 1` with nothing printed anywhere —
+ *  confirmed empirically: `cofleet login` under a network-denying sandbox
+ *  (macOS `sandbox-exec` with `deny network*`) prints literally nothing and
+ *  exits 1, and the static-token branch does the same under a filesystem
+ *  write denial. Indistinguishable from a real bug and from `login`
+ *  succeeding-then-crashing. Print what actually went wrong so a restricted
+ *  agent session can ask for the specific permission instead of guessing.
+ *
+ *  Never a token or credential: everything that reaches this catch is a
+ *  Node/fetch/fs error message (ENOENT, EPERM, "fetch failed", a bare path)
+ *  or one of this file's own thrown `Error` messages, none of which embed
+ *  secret material — `runLogin`'s success path prints the token deliberately
+ *  elsewhere, but nothing on this failure path ever holds one. */
+function reportUnexpectedFailure(command, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(
+    `cofleet ${command} failed unexpectedly: ${message}\n` +
+      `If this is a sandboxed or restricted session, it may need network and/or ` +
+      `filesystem permission for this command — see the cofleet-presence skill.\n`,
+  );
+}
+
 // Only when this file is the process entry point (always true under the
 // `cofleet` shell shim) — never when a test imports it to drive the exported
 // functions directly, which must not also run the CLI and call
@@ -1093,13 +1544,22 @@ async function main() {
 
   try {
     if (command === 'login') {
-      exitCode = await runLogin(process.argv[3]).catch(() => 1);
+      exitCode = await runLogin(process.argv[3]).catch((error) => {
+        reportUnexpectedFailure('login', error);
+        return 1;
+      });
     } else if (command === 'logout') {
-      exitCode = await runLogout().catch(() => 1);
+      exitCode = await runLogout().catch((error) => {
+        reportUnexpectedFailure('logout', error);
+        return 1;
+      });
     } else if (command === 'status') {
       runStatus();
     } else if (command === 'doctor') {
-      exitCode = await runDoctor().catch(() => 1);
+      exitCode = await runDoctor().catch((error) => {
+        reportUnexpectedFailure('doctor', error);
+        return 1;
+      });
     } else {
       // Every failure inside the hook path is swallowed on purpose.
       await runHook().catch(() => {});

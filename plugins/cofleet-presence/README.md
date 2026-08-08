@@ -13,10 +13,15 @@ claude plugin marketplace add Cofleet/cofleet-marketplace
 claude plugin install cofleet-presence@cofleet
 ```
 
-A Codex build is coming; today this plugin runs on Claude Code.
+For Codex:
 
-Restart Claude Code, or run `/reload-plugins`, then authorize and check the
-installation from a session:
+```sh
+codex plugin marketplace add Cofleet/cofleet-marketplace
+codex plugin add cofleet-presence@cofleet
+```
+
+Restart your agent, or run `/reload-plugins` in Claude Code, then authorize and
+check the installation from a session:
 
 ```sh
 cofleet login
@@ -28,6 +33,18 @@ cofleet doctor
 server and credential state without contacting Cofleet. `doctor` sends a
 deliberately invalid probe that creates no session; `reporting: OK (HTTP 400)`
 confirms the credential and reporting endpoint work.
+
+**On Codex, run `$cofleet-presence` instead of typing those commands.** Codex
+does not put a plugin's commands on your shell's PATH, so a bare `cofleet` does
+not resolve there; the skill locates the plugin's own copy and runs it. It also
+asks for the network and file permissions each command needs. Two things to
+know:
+
+- Codex asks you to trust a plugin's hooks the first time. Do that, then start
+  a new session before logging in — the `SessionStart` hook is what records
+  which install your consent belongs to.
+- The skill never logs you in on its own. It reports status and waits for you
+  to ask.
 
 **On a genuinely fresh install** — no agent session has run even once with
 this plugin installed, so no hook has ever fired — a `cofleet login` run from
@@ -79,6 +96,11 @@ authorization from your Cofleet account as well.
 
 ## status's four states
 
+**`reporting` is the only state that sends anything.** Treat any other as "not
+set up yet", however successful `login` looked — the hooks check the credential
+and this install's consent marker on every event and exit silently when either
+is missing.
+
 `cofleet status` reports one of four reporting states:
 
 - `not logged in` — no credential stored for this server.
@@ -91,6 +113,15 @@ authorization from your Cofleet account as well.
   as "not consented" — it means unknown, not no. Start an agent session here,
   then run `cofleet login` again.
 - `reporting` — a credential exists and this install has consented; hooks post.
+
+With this plugin installed in more than one coding agent on the same machine
+(Claude Code and Codex, say), `login` and `logout` run from a plain terminal
+act on every install this shell can see, not just one. If installs disagree
+— one has consented, another has not — `status` run from that same terminal
+reports `logged in — consented on some installs on this machine but not
+all`, rather than picking one arbitrarily; run `cofleet status` from inside
+the specific agent session instead, which reports that install's own state
+directly.
 
 `cofleet doctor` reports the same distinction as a line in its output:
 `reporting: UNKNOWN — cannot verify consent from this shell (no
@@ -140,6 +171,7 @@ or uninstall the plugin entirely:
 
 ```sh
 claude plugin uninstall cofleet-presence@cofleet
+codex plugin remove cofleet-presence@cofleet
 ```
 
 ## Updates
@@ -149,6 +181,11 @@ Update the marketplace and plugin directly, then restart your agent:
 ```sh
 claude plugin marketplace update cofleet
 claude plugin update cofleet-presence@cofleet
+```
+
+```sh
+codex plugin marketplace upgrade cofleet
+codex plugin add cofleet-presence@cofleet
 ```
 
 For help, run `cofleet status` and `cofleet doctor` and share only their

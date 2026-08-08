@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 - 2026-08-08
+
+- `cofleet-presence` now works on Codex, not just Claude Code. Install it the
+  same way, then run `$cofleet-presence` to sign in.
+- Setup problems say what is wrong. Signing in could fail while printing
+  nothing at all, leaving reporting off when everything looked fine.
+- Your session title no longer flips back to the folder name partway through a
+  long session.
+- Running Cofleet in both Claude Code and Codex on one machine works. Signing
+  in once covers both.
+
 ## 0.4.0 - 2026-08-07
 
 - Split the plugin in two. `cofleet` carries the Cofleet MCP connection and the
@@ -14,7 +25,7 @@
   `cofleet login` again.
 - `implement-spec` accepts a pinned Spec snapshot through `--spec-node` and
   `--snapshot`, alongside the existing board and Spec node lane.
-- For Codex, only `cofleet` ships: that plugin format has no hook surface.
+- For Codex, only `cofleet` ships in this version.
 
 ## 0.3.0 - 2026-08-06
 

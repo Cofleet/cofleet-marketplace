@@ -26,11 +26,12 @@ claude plugin install cofleet@cofleet
 claude plugin install cofleet-presence@cofleet
 ```
 
-For Codex (`cofleet` only — a Codex build of `cofleet-presence` is coming):
+For Codex:
 
 ```sh
 codex plugin marketplace add Cofleet/cofleet-marketplace
 codex plugin add cofleet@cofleet
+codex plugin add cofleet-presence@cofleet
 ```
 
 The customer plugins connect to `https://app.cofleet.dev`.
@@ -40,8 +41,7 @@ The customer plugins connect to `https://app.cofleet.dev`.
 Restart your agent, or run `/reload-plugins` in Claude Code, to pick up the new
 plugin.
 
-`cofleet-presence` reports nothing until you authorize it. From an agent
-session, run:
+`cofleet-presence` reports nothing until you authorize it. In Claude Code, run:
 
 ```sh
 cofleet login
@@ -49,10 +49,21 @@ cofleet status
 cofleet doctor
 ```
 
+On Codex, run `$cofleet-presence` instead and ask it to log in — Codex does not
+put a plugin's commands on your shell's PATH, so the skill locates them for
+you. Codex also asks you to trust a plugin's hooks the first time; do that
+before logging in.
+
 `login` opens a browser so you can sign in. `status` shows the selected server
 and credential state without contacting Cofleet. `doctor` sends an invalid
 probe that writes no session; `reporting: OK (HTTP 400)` confirms the
 credential and endpoint work.
+
+**You are set up when `cofleet status` ends with `status: reporting`.** Any
+other state means nothing is being sent, and the line above it says which
+piece is missing. Send one prompt and you should appear on your team's view
+straight away — prompts post immediately, while file paths batch once a
+minute.
 
 ## Updating
 
@@ -67,6 +78,7 @@ For Codex:
 ```sh
 codex plugin marketplace upgrade cofleet
 codex plugin add cofleet@cofleet
+codex plugin add cofleet-presence@cofleet
 ```
 
 The marketplace and plugins update straight from the repository.
@@ -82,6 +94,7 @@ For Codex:
 
 ```sh
 codex plugin remove cofleet@cofleet
+codex plugin remove cofleet-presence@cofleet
 ```
 
 Uninstalling `cofleet-presence` stops reporting. Short of that,
