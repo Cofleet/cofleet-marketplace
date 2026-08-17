@@ -2,9 +2,9 @@
 
 This marketplace publishes the Cofleet plugin for coding agents.
 
-- **`cofleet`** — the `cofleet-implement-spec` workflow and the Cofleet MCP
-  connection: project context and code intelligence. Available for Claude
-  Code and Codex.
+- **`cofleet`** — the `cofleet-design-sync` and `cofleet-implement-spec`
+  workflows and the Cofleet MCP connection: project context and code
+  intelligence. Available for Claude Code and Codex.
 
 ## Install
 
