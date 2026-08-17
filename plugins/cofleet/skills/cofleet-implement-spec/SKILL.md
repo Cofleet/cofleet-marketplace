@@ -1,6 +1,6 @@
 ---
-name: implement-spec
-description: Build a selected Cofleet Playground Spec document in the current repository and hand it back as a pull request. Use for /implement-spec, invoked with a board ID and Spec node ID, or with a pinned Spec snapshot via --spec-node and --snapshot.
+name: cofleet-implement-spec
+description: Build a selected Cofleet Playground Spec document in the current repository and hand it back as a pull request. Use for /cofleet-implement-spec, invoked with a board ID and Spec node ID, or with a pinned Spec snapshot via --spec-node and --snapshot.
 ---
 
 # Implement a spec

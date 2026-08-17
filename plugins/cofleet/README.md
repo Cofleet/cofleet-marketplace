@@ -1,10 +1,7 @@
 # Cofleet plugin
 
-The Cofleet plugin adds the `implement-spec` workflow and the Cofleet MCP
+The Cofleet plugin adds the `cofleet-implement-spec` workflow and the Cofleet MCP
 connection to your coding agent: project context and code intelligence.
-
-Team-presence reporting is a separate, independently installed plugin: see
-[`cofleet-presence`](../cofleet-presence/README.md).
 
 ## Install from the public marketplace
 
@@ -17,10 +14,6 @@ claude plugin install cofleet@cofleet
 
 The customer plugin connects to `https://app.cofleet.dev`. Restart Claude Code
 or run `/reload-plugins` to pick it up.
-
-To also install team-presence reporting, add `cofleet-presence` from the same
-marketplace — see its README for the install command and its full data-sent
-disclosure.
 
 ## Updates
 

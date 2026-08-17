@@ -1,8 +1,0 @@
-{
-  "name": "cofleet-presence",
-  "description": "Cofleet team presence: session reporting for Claude Code",
-  "version": "0.5.0",
-  "author": { "name": "Cofleet" },
-  "homepage": "https://cofleet.dev",
-  "repository": "https://github.com/Cofleet/cofleet-marketplace"
-}
