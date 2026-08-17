@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1 - 2026-08-17
+
+- Removed cofleet-presence, now uses board activity instead of chat activity
+- Added skills to interact with board to record local decisions; prompt, prototype, research, spec
+- New skill to sync your design system with your Cofleet workspace
+
+## 0.6.0 - 2026-08-11
+
+- No change to the released workflows. This version carries preview-tier
+  workflows only, which are not part of the published catalog.
+
 ## 0.5.0 - 2026-08-08
 
 - `cofleet-presence` now works on Codex, not just Claude Code. Install it the
@@ -8,8 +19,8 @@
   nothing at all, leaving reporting off when everything looked fine.
 - Your session title no longer flips back to the folder name partway through a
   long session.
-- Running Cofleet in both Claude Code and Codex on one machine works. Signing
-  in once covers both.
+- Running Cofleet in both Claude Code and Codex on one machine works. Sign in
+  once in each.
 
 ## 0.4.0 - 2026-08-07
 

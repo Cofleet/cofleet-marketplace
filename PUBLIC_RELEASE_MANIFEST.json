@@ -1,86 +1,46 @@
 {
   "schemaVersion": 1,
-  "version": "0.5.0",
-  "sourceSha": "1514a7803d50e33d068d75ad461695198019f214",
+  "version": "0.6.1",
+  "sourceSha": "a5535988a034b1805f857edc8954110b3a4d673c",
   "files": [
     {
       "path": ".agents/plugins/marketplace.json",
-      "sha256": "b82d1acc6ce715e4fd5c51e6291f69c71ff494421b372e4e6e291609782a12e4",
+      "sha256": "a9752e65b9ebb1581fde7051e4933945d8f46ba281d3a21c5d04264d7b71d1aa",
       "mode": "0644"
     },
     {
       "path": ".claude-plugin/marketplace.json",
-      "sha256": "db14d4c9242fd63c2cc63b9a71c772dd3048bb8a67caa87b935a8a4adb0e8383",
+      "sha256": "04533205ef3da7dd0010dda905e9b610cbdc82577cc94164bfb8052d777b87e0",
       "mode": "0644"
     },
     {
       "path": ".github/workflows/release-version.yml",
-      "sha256": "24cfd2b45fee4dd98222c5c2c48987fd4611ae2bc61070071600c755536a573f",
+      "sha256": "142077bf501149e0c4375074027b6b224e0cc7f2cab79987dcf655d47ded8b85",
       "mode": "0644"
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "65744edfdb97f1f069b18d0a5f92a2488e7f5d1ce1bd4151e8063697058167f8",
+      "sha256": "9e6e271a078d84ef622004f2a3570eae4ed6c8d99254186e1ae55c26553123a4",
+      "mode": "0644"
+    },
+    {
+      "path": "INSTALL.md",
+      "sha256": "86d283804e8d25838ac811823696c3e7c6ae4a4fe374075dfbcc0ad5a99bf656",
       "mode": "0644"
     },
     {
       "path": "README.md",
-      "sha256": "d9a24645826f079ee7010d300b0ce92127c6d0c0812e906c1af58c657b72aecc",
-      "mode": "0644"
-    },
-    {
-      "path": "plugins/cofleet-presence/.claude-plugin/plugin.json",
-      "sha256": "a14fe724033c28eafda516bcd1a7ca1180a4ad36469ef97e1302f437afe197ad",
-      "mode": "0644"
-    },
-    {
-      "path": "plugins/cofleet-presence/.codex-plugin/plugin.json",
-      "sha256": "895c28eb434c36f79f3e22666445425119c5e48c099d5fa4c73909fdf201b4d2",
-      "mode": "0644"
-    },
-    {
-      "path": "plugins/cofleet-presence/README.md",
-      "sha256": "3ed32a8cfd8de03ac2d93149812ae48057166d1d8b5ef37c42ad2fb83ca9b5ed",
-      "mode": "0644"
-    },
-    {
-      "path": "plugins/cofleet-presence/bin/cofleet",
-      "sha256": "2161e3f9e39ec4e6d50f6e4bfcd0beeb98c1d0ec7c7e071268f3fdc74e26a248",
-      "mode": "0755"
-    },
-    {
-      "path": "plugins/cofleet-presence/bin/cofleet.mjs",
-      "sha256": "c4f081baed593af8d82992a0a3201cd204ed3e824dd6ff16930cbc00d63da40f",
-      "mode": "0755"
-    },
-    {
-      "path": "plugins/cofleet-presence/bin/oauth.mjs",
-      "sha256": "8242d46ba6500ba946df5a88990544a411d678dcc3a5039078544fb091fc6dc5",
-      "mode": "0644"
-    },
-    {
-      "path": "plugins/cofleet-presence/environment.mjs",
-      "sha256": "6fbacd8cfda94334ef637802a5d046c13be3d5b7bb4a8259450f575ee8a60e67",
-      "mode": "0644"
-    },
-    {
-      "path": "plugins/cofleet-presence/hooks/hooks.json",
-      "sha256": "efba7e004bdb6c554113674bcb87a46187517090b707b97d968713403e9fd6a7",
-      "mode": "0644"
-    },
-    {
-      "path": "plugins/cofleet-presence/skills/cofleet-presence/SKILL.md",
-      "sha256": "5f1d64b8f227aed20fe244d1d3620ef832ffffface02511750a39f0acc1cf739",
+      "sha256": "d2fbce27507cca5267d0f89630448c1f35993599ce34f97c9164da4a6d3503a1",
       "mode": "0644"
     },
     {
       "path": "plugins/cofleet/.claude-plugin/plugin.json",
-      "sha256": "e2fd855b603c992f4a47bfd7b6114f5f85b8be17e5b3088365e1e11700d603f8",
+      "sha256": "ede96426ec66674e5f5d2a2e6f8d34a1b533aed4b3fc7618af9c82f466646ef5",
       "mode": "0644"
     },
     {
       "path": "plugins/cofleet/.codex-plugin/plugin.json",
-      "sha256": "c107ae4641059cc48f00af7adf059200b47e485b203bf182d3c560c2cfd28567",
+      "sha256": "5c8ff709c6938ba0c6ce226fa4c17e1fb7d42ac9d49422e1365c6b6fb75566c9",
       "mode": "0644"
     },
     {
@@ -90,12 +50,12 @@
     },
     {
       "path": "plugins/cofleet/README.md",
-      "sha256": "a1eb117c37301adb92a0440c164b1d32a71ccf67b4d0fb432bbab5bc46db992c",
+      "sha256": "eda7c1d00daa78f60b3304832f150aaeac4f778ff3e4c11bb501cc765805e81e",
       "mode": "0644"
     },
     {
-      "path": "plugins/cofleet/skills/implement-spec/SKILL.md",
-      "sha256": "9ff614eabc0ffe0e69a7cd930e0904a8c52c440605b5e2f599338cb9bdba05fa",
+      "path": "plugins/cofleet/skills/cofleet-implement-spec/SKILL.md",
+      "sha256": "5941980d0e18c1f065f906570b726f2d6c971cd94650719815959593552343df",
       "mode": "0644"
     }
   ]

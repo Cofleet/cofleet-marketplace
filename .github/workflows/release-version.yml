@@ -47,14 +47,13 @@ jobs:
           // base predating that plugin's Codex packaging) via
           // `allowMissingCodex`, never at the candidate/head — see
           // `pluginVersionAt`.
+          // `cofleet-presence` was dropped from this table deliberately, as the
+          // decision recorded in ADR-0256. With this one-plugin table, the
+          // candidate-null guard below is the plugin-tree removal check.
           const manifests = {
             cofleet: [
               'plugins/cofleet/.claude-plugin/plugin.json',
               'plugins/cofleet/.codex-plugin/plugin.json',
-            ],
-            'cofleet-presence': [
-              'plugins/cofleet-presence/.claude-plugin/plugin.json',
-              'plugins/cofleet-presence/.codex-plugin/plugin.json',
             ],
           };
           const ref = (value, label) => {
@@ -112,23 +111,17 @@ jobs:
             if (new Set(versions).size > 1) throw new Error(`${label} plugin manifest versions do not match`);
             return versions[0];
           };
-          // Returns both the resolved single version (or null when no plugin
-          // is present) and the raw per-plugin table, because the version
-          // alone cannot tell a head that dropped one released plugin from a
-          // head that never touched it: as long as any plugin remains present
-          // the resolved version is non-null either way.
+          // Returns the resolved single version, or null when no plugin is
+          // present.
           const versionsAt = (sha, label, { allowMissingCodex = false } = {}) => {
-            const perPlugin = Object.entries(manifests).map(([pluginName, paths]) => [
-              pluginName,
-              pluginVersionAt(sha, label, pluginName, paths, { allowMissingCodex }),
-            ]);
-            const present = perPlugin.filter(([, version]) => version !== null);
-            if (present.length === 0) return { version: null, perPlugin };
-            const versions = present.map(([, version]) => version);
+            const versions = Object.entries(manifests)
+              .map(([pluginName, paths]) => pluginVersionAt(sha, label, pluginName, paths, { allowMissingCodex }))
+              .filter((version) => version !== null);
+            if (versions.length === 0) return { version: null };
             if (new Set(versions).size > 1) {
-              throw new Error(`${label} plugin manifest versions do not match: ${present.map(([name, version]) => `${name} ${version}`).join(', ')}`);
+              throw new Error(`${label} plugin manifest versions do not match`);
             }
-            return { version: versions[0], perPlugin };
+            return { version: versions[0] };
           };
           const compare = (left, right) => {
             const a = left.split('.').map(BigInt);
@@ -149,17 +142,6 @@ jobs:
             }
             console.log('No plugin tree on either side: governance-only pull request, nothing to gate.');
             process.exit(0);
-          }
-          // At least one plugin survives in the candidate, so the overall
-          // version check below would pass even if a released plugin present
-          // at base was dropped entirely (e.g. cofleet bumps while
-          // cofleet-presence is deleted). Reject that per plugin, not only
-          // when every plugin disappears.
-          for (const [pluginName, baseVersion] of base.perPlugin) {
-            const headVersion = candidate.perPlugin.find(([name]) => name === pluginName)?.[1] ?? null;
-            if (baseVersion !== null && headVersion === null) {
-              throw new Error(`candidate removes plugin from a released marketplace: ${pluginName}`);
-            }
           }
           // First release: main has no plugin yet, so any valid version wins.
           const previous = base.version ?? '0.0.0';
