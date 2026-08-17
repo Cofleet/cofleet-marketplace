@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "0.6.1",
-  "sourceSha": "a5535988a034b1805f857edc8954110b3a4d673c",
+  "version": "0.6.2",
+  "sourceSha": "1992f2e991ed62c59dbee27cdd75986cae4e2b90",
   "files": [
     {
       "path": ".agents/plugins/marketplace.json",
@@ -20,7 +20,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "9e6e271a078d84ef622004f2a3570eae4ed6c8d99254186e1ae55c26553123a4",
+      "sha256": "a7c6680bb041eacef6de9d31f50cd1e25d1b4dbd70402395be6de615d8b0470f",
       "mode": "0644"
     },
     {
@@ -30,17 +30,17 @@
     },
     {
       "path": "README.md",
-      "sha256": "d2fbce27507cca5267d0f89630448c1f35993599ce34f97c9164da4a6d3503a1",
+      "sha256": "bcc3c3534cceea144a41258d1c8c899eac49154f83c4a5776958e9d2da8cfae6",
       "mode": "0644"
     },
     {
       "path": "plugins/cofleet/.claude-plugin/plugin.json",
-      "sha256": "ede96426ec66674e5f5d2a2e6f8d34a1b533aed4b3fc7618af9c82f466646ef5",
+      "sha256": "098730d5cbd5f04daa43398aab423cbca27591a36a0c87f4d6fcaaad1b703431",
       "mode": "0644"
     },
     {
       "path": "plugins/cofleet/.codex-plugin/plugin.json",
-      "sha256": "5c8ff709c6938ba0c6ce226fa4c17e1fb7d42ac9d49422e1365c6b6fb75566c9",
+      "sha256": "f7d0393d8e087818099fc4d6de588c05cb2bb917cec190dec9de0f7c33e74e43",
       "mode": "0644"
     },
     {
@@ -50,7 +50,12 @@
     },
     {
       "path": "plugins/cofleet/README.md",
-      "sha256": "eda7c1d00daa78f60b3304832f150aaeac4f778ff3e4c11bb501cc765805e81e",
+      "sha256": "2aa1bd4a78da6af5a040b3b1dc281bcc4e3b1f174ed6ecd41d062fd3e1020251",
+      "mode": "0644"
+    },
+    {
+      "path": "plugins/cofleet/skills/cofleet-design-sync/SKILL.md",
+      "sha256": "177dba597239afad6aacbd81147010367ab8c4fa3eb6a0e098d3236be552962a",
       "mode": "0644"
     },
     {

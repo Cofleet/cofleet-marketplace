@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 - 2026-08-17
+
+- Remove board write skills
+
 ## 0.6.1 - 2026-08-17
 
 - Removed cofleet-presence, now uses board activity instead of chat activity

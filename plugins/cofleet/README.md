@@ -1,7 +1,8 @@
 # Cofleet plugin
 
-The Cofleet plugin adds the `cofleet-implement-spec` workflow and the Cofleet MCP
-connection to your coding agent: project context and code intelligence.
+The Cofleet plugin adds the `cofleet-design-sync` and `cofleet-implement-spec`
+workflows and the Cofleet MCP connection to your coding agent: project context
+and code intelligence.
 
 ## Install from the public marketplace
 

@@ -1,6 +1,6 @@
 {
   "name": "cofleet",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Cofleet project context and code intelligence for coding agents",
   "author": {
     "name": "Cofleet",
@@ -23,8 +23,8 @@
   },
   "interface": {
     "displayName": "Cofleet",
-    "shortDescription": "Build Cofleet specs and share coding-agent activity",
-    "longDescription": "Use Cofleet project context and workflows to build specs and ship pull requests.",
+    "shortDescription": "Sync design systems and build Cofleet specs",
+    "longDescription": "Use Cofleet project context and workflows to sync a product's design system and build specs.",
     "developerName": "Cofleet",
     "category": "Developer Tools",
     "capabilities": [
@@ -33,8 +33,8 @@
     ],
     "websiteURL": "https://cofleet.dev",
     "defaultPrompt": [
-      "Build this Cofleet spec and open a pull request",
-      "Record a review video for this Cofleet spec"
+      "Sync this repository's design system to Cofleet",
+      "Build this Cofleet spec and open a pull request"
     ]
   }
 }
